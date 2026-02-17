@@ -98,144 +98,30 @@ def get_all_users_segmented(domain, access_token, per_page=100):
     return list(unique_users.values())
 
 #--------------------------------------------------
-# 取得ユーザー情報から必要項目を平坦化＆項目名を変更する関数　※2026.2.17書き換え
+# 取得ユーザー情報から必要項目を平坦化＆項目名を変更する関数
 #--------------------------------------------------
-from datetime import datetime, timezone, timedelta
-from typing import Any
-
-# JST（出力は日本時間に統一）
-JST = timezone(timedelta(hours=9))
-
-def _normalize_datetime(value: Any) -> str:
-    """
-    - 入力: ISO, 'YYYYMMDD', 'YYYY/MM/DD', UNIX秒/ミリ秒 (int/str) 等を想定
-    - 出力: 'YYYY-MM-DD HH:MM:SS'（JST）
-    - 失敗時は空文字
-    """
-    if value is None or value == "":
-        return ""
-    # 数値型
-    if isinstance(value, (int, float)):
-        iv = int(value)
-        if iv > 10**12:
-            iv = iv / 1000.0
-        try:
-            dt = datetime.fromtimestamp(iv, timezone.utc).astimezone(JST)
-            return dt.strftime("%Y-%m-%d %H:%M:%S")
-        except Exception:
-            return ""
-    # 文字列
-    if isinstance(value, str):
-        s = value.strip()
-        # 1) YYYYMMDD (例: 20260217)
-        if s.isdigit() and len(s) == 8:
-            try:
-                yyyy = int(s[0:4]); mm = int(s[4:6]); dd = int(s[6:8])
-                dt = datetime(yyyy, mm, dd, 0, 0, 0, tzinfo=JST)
-                return dt.strftime("%Y-%m-%d %H:%M:%S")
-            except Exception:
-                pass
-        # 2) YYYY/MM/DD や YYYY-MM-DD だけの形式
-        for fmt in ("%Y/%m/%d", "%Y-%m-%d"):
-            try:
-                dt = datetime.strptime(s, fmt).replace(tzinfo=JST)
-                return dt.strftime("%Y-%m-%d %H:%M:%S")
-            except Exception:
-                pass
-        # 3) ISO形式 (Z付き含む)
-        try:
-            dt = datetime.fromisoformat(s.replace("Z", "+00:00"))
-            if dt.tzinfo is None:
-                dt = dt.replace(tzinfo=timezone.utc)
-            dt = dt.astimezone(JST)
-            return dt.strftime("%Y-%m-%d %H:%M:%S")
-        except Exception:
-            pass
-        # 4) 数字文字列（UNIX秒/ミリ秒）
-        try:
-            iv = int(s)
-            if iv > 10**12:
-                iv = iv / 1000.0
-            dt = datetime.fromtimestamp(iv, timezone.utc).astimezone(JST)
-            return dt.strftime("%Y-%m-%d %H:%M:%S")
-        except Exception:
-            pass
-    return ""
-
-def _norm_key(k: str) -> str:
-    """キーの正規化（小文字・空白とアンダースコアを削る）"""
-    return k.lower().replace(" ", "").replace("_", "")
-
-def _find_key_recursive(obj: Any, target_names):
-    """
-    ネストした dict/list を探索して、キー名が target_names のいずれかとマッチする最初の値を返す。
-    比較は_norm_keyで正規化して行う。
-    """
-    targets = { _norm_key(t) for t in target_names }
-
-    def _rec(o):
-        if isinstance(o, dict):
-            for k, v in o.items():
-                if _norm_key(k) in targets:
-                    return v
-                res = _rec(v)
-                if res is not None:
-                    return res
-        elif isinstance(o, list):
-            for item in o:
-                res = _rec(item)
-                if res is not None:
-                    return res
-        return None
-
-    return _rec(obj)
-
 def rename_and_flatten_fields(users):
-    """
-    users: list of user dicts (Auth0 エクスポート形式想定)
-    戻り: new_users: list of dicts（出力用）
-    マスト項目（あなたの要件）:
-      - created_at, updated_at, Email Verified, 氏名, 住所（postcode/prefecture/city）, company_name
-    さらに Expire date を Column1.expire_date_raw / Column1.expire_date として追加
-    """
     new_users = []
     for user in users:
-        # --- 既存マストフィールドを必ず残す ---
         new_user = {
             "user_id": user.get("user_id", ""),
             "email": user.get("email", ""),
-            "Email Verified": user.get("email_verified", False),
-            "created_at": _normalize_datetime(user.get("created_at", "")),
-            "updated_at": _normalize_datetime(user.get("updated_at", "")),
-
-            # 名前（user_metadata 由来を想定）
+            "Email Verified": user.get("email_verified", ""),
+            "created_at": user.get("created_at", ""),
+            "updated_at": user.get("updated_at", ""),
             "Column1.user_metadata.last_name": user.get("user_metadata", {}).get("last_name", ""),
-            "Column1.user_metadata.first_name": user.get("user_metadata", {}).get("first_name", ""),
-            # 住所・社名（既存のネストパスを踏襲）
-            "Column1.app_metadata.organization_data.metadata.company_address.postcode":
-                user.get("app_metadata", {}).get("organization_data", {}).get("metadata", {}).get("company_address", {}).get("postcode", ""),
-            "Column1.app_metadata.organization_data.metadata.company_address.prefecture":
-                user.get("app_metadata", {}).get("organization_data", {}).get("metadata", {}).get("company_address", {}).get("prefecture", ""),
-            "Column1.app_metadata.organization_data.metadata.company_address.city":
-                user.get("app_metadata", {}).get("organization_data", {}).get("metadata", {}).get("company_address", {}).get("city", ""),
-            "Column1.app_metadata.organization_data.metadata.company_name":
-                user.get("app_metadata", {}).get("organization_data", {}).get("metadata", {}).get("company_name", "")
+            "Column1.user_metadata.first_name": user.get("user_metadata", {}).get("first_name", "")
         }
-
-        # --- Expire date を探索（候補キーの集合） ---
-        target_keys = [
-            "Expire date", "expire_date", "expiration", "expiry", "expired_at", "expire",
-            "ExpireDate", "ExpireDateRaw", "expiredate"
-        ]
-        found = _find_key_recursive(user, target_keys)
-
-        new_user["Column1.expire_date_raw"] = found if found is not None else ""
-        new_user["Column1.expire_date"] = _normalize_datetime(found) if found is not None else ""
-
+        app_metadata = user.get("app_metadata", {})
+        org_data = app_metadata.get("organization_data", {})
+        metadata = org_data.get("metadata", {})
+        company_address = metadata.get("company_address", {})
+        new_user["Column1.app_metadata.organization_data.metadata.company_address.postcode"] = company_address.get("postcode", "")
+        new_user["Column1.app_metadata.organization_data.metadata.company_address.prefecture"] = company_address.get("prefecture", "")
+        new_user["Column1.app_metadata.organization_data.metadata.company_address.city"] = company_address.get("city", "")
+        new_user["Column1.app_metadata.organization_data.metadata.company_name"] = metadata.get("company_name", "")
         new_users.append(new_user)
     return new_users
-
-
 
 #--------------------------------------------------
 # メイン処理
