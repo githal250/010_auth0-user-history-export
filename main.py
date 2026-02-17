@@ -4,11 +4,13 @@
 
 import requests
 import json
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import os
 import sys
 from dotenv import load_dotenv
 import pandas as pd
+import traceback
+from typing import Any
 
 #--------------------------------------------------
 # .env ファイルの読み込み（スクリプトと同じディレクトリ）
@@ -100,8 +102,6 @@ def get_all_users_segmented(domain, access_token, per_page=100):
 #--------------------------------------------------
 # 取得ユーザー情報から必要項目を平坦化＆項目名を変更する関数　※2026.2.17書き換え
 #--------------------------------------------------
-from datetime import datetime, timezone, timedelta
-from typing import Any
 
 # JST（出力は日本時間に統一）
 JST = timezone(timedelta(hours=9))
@@ -235,39 +235,82 @@ def rename_and_flatten_fields(users):
         new_users.append(new_user)
     return new_users
 
+#--------------------------------------------------
+# エクスポート処理（独立関数）
+# これを app.py から呼び出すことで GUI から実行できます
+#--------------------------------------------------
+def export_all_users_to_files(domain, client_id, client_secret, audience, per_page=100):
+    """
+    実際のエクスポート処理を行い、出力ファイルのパスを返す。
+    成功時: (True, {"json": json_path, "excel": excel_path})
+    失敗時: (False, "エラーメッセージ")
+    """
+    try:
+        print("アクセストークンを取得中...")
+        access_token = get_access_token(domain, client_id, client_secret, audience)
+        print("アクセストークン取得完了。")
 
+        print("すべてのユーザー情報をセグメント別に取得中...")
+        users = get_all_users_segmented(domain, access_token, per_page=per_page)
+        total_count = len(users)
+        print(f"全体の取得件数: {total_count}")
+
+        print("ユーザー情報の整形（ネスト解除＆項目名変更）を行っています...")
+        users = rename_and_flatten_fields(users)
+
+        output_dir = os.path.join(script_dir, "output")
+        os.makedirs(output_dir, exist_ok=True)
+
+        current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        base_filename = f"userlist_{current_time}_件数{total_count}"
+        json_filename = os.path.join(output_dir, f"{base_filename}.json")
+        excel_filename = os.path.join(output_dir, f"{base_filename}.xlsx")
+
+        with open(json_filename, "w", encoding="utf-8") as f:
+            json.dump(users, f, ensure_ascii=False, indent=2)
+        print(f"すべてのユーザーデータを {json_filename} に出力しました。")
+
+        df = pd.json_normalize(users)
+        df.to_excel(excel_filename, index=False)
+        print(f"変換完了：{excel_filename} に保存されました。")
+
+        return True, {"json": json_filename, "excel": excel_filename}
+    except Exception as e:
+        tb = traceback.format_exc()
+        err_msg = f"{e}\n{tb}"
+        print("エクスポート中にエラーが発生しました:", err_msg)
+        return False, err_msg
 
 #--------------------------------------------------
-# メイン処理
+# run_export (GUI から呼ぶためのラッパ)
+#--------------------------------------------------
+def run_export():
+    """
+    app.py など GUI から呼び出す用の関数。
+    成功時: (True, ファイルパス文字列) を返す
+    失敗時: (False, エラーメッセージ) を返す
+    """
+    try:
+        ok, info = export_all_users_to_files(domain, client_id, client_secret, audience, per_page=100)
+        if ok:
+            # info は辞書 {"json": ..., "excel": ...}
+            return True, info.get("excel", info)
+        else:
+            return False, info
+    except Exception as e:
+        tb = traceback.format_exc()
+        return False, f"{e}\n{tb}"
+
+#--------------------------------------------------
+# メイン処理（CLI 実行時）
 #--------------------------------------------------
 def main():
-    print("アクセストークンを取得中...")
-    access_token = get_access_token(domain, client_id, client_secret, audience)
-    print("アクセストークン取得完了。")
-
-    print("すべてのユーザー情報をセグメント別に取得中...")
-    users = get_all_users_segmented(domain, access_token, per_page=100)
-    total_count = len(users)
-    print(f"全体の取得件数: {total_count}")
-
-    print("ユーザー情報の整形（ネスト解除＆項目名変更）を行っています...")
-    users = rename_and_flatten_fields(users)
-
-    output_dir = os.path.join(script_dir, "output")
-    os.makedirs(output_dir, exist_ok=True)
-
-    current_time = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
-    base_filename = f"userlist_{current_time}_件数{total_count}"
-    json_filename = os.path.join(output_dir, f"{base_filename}.json")
-    excel_filename = os.path.join(output_dir, f"{base_filename}.xlsx")
-
-    with open(json_filename, "w", encoding="utf-8") as f:
-        json.dump(users, f, ensure_ascii=False, indent=2)
-    print(f"すべてのユーザーデータを {json_filename} に出力しました。")
-
-    df = pd.json_normalize(users)
-    df.to_excel(excel_filename, index=False)
-    print(f"変換完了：{excel_filename} に保存されました。")
+    ok, info = export_all_users_to_files(domain, client_id, client_secret, audience, per_page=100)
+    # export_all_users_to_files が標準出力でメッセージを出しているため
+    # ここでは追加処理は不要。ただし戻り値を使って終了コードを制御することは可能。
+    if not ok:
+        # エラー時は非ゼロコードで終了
+        sys.exit(1)
 
 if __name__ == "__main__":
     main()
