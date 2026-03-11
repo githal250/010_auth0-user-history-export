@@ -1,3 +1,5 @@
+#アプリ化時のUI設定プログラム
+
 # app.py
 import threading
 import tkinter as tk

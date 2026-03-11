@@ -12,6 +12,21 @@ import pandas as pd
 import traceback
 from typing import Any
 
+def find_prm_expire(obj):
+    if isinstance(obj, dict):
+        if "prm_expire_date" in obj:
+            return obj["prm_expire_date"]
+        for v in obj.values():
+            r = find_prm_expire(v)
+            if r is not None:
+                return r
+    if isinstance(obj, list):
+        for i in obj:
+            r = find_prm_expire(i)
+            if r is not None:
+                return r
+    return None
+
 #--------------------------------------------------
 # .env ファイルの読み込み（スクリプトと同じディレクトリ）
 #--------------------------------------------------
@@ -196,7 +211,7 @@ def rename_and_flatten_fields(users):
     戻り: new_users: list of dicts（出力用）
     マスト項目（あなたの要件）:
       - created_at, updated_at, Email Verified, 氏名, 住所（postcode/prefecture/city）, company_name
-    さらに Expire date を Column1.expire_date_raw / Column1.expire_date として追加
+    さらに 解約予定日 を Column1.prm_expire_date_raw / Column1.prm_expire_date として追加
     """
     new_users = []
     for user in users:
@@ -222,16 +237,10 @@ def rename_and_flatten_fields(users):
                 user.get("app_metadata", {}).get("organization_data", {}).get("metadata", {}).get("company_name", "")
         }
 
-        # --- Expire date を探索（候補キーの集合） ---
-        target_keys = [
-            "Expire date", "expire_date", "expiration", "expiry", "expired_at", "expire",
-            "ExpireDate", "ExpireDateRaw", "expiredate"
-        ]
-        found = _find_key_recursive(user, target_keys)
-
-        new_user["Column1.expire_date_raw"] = found if found is not None else ""
-        new_user["Column1.expire_date"] = _normalize_datetime(found) if found is not None else ""
-
+        found = find_prm_expire(user)
+        new_user["Column1.prm_expire_date_raw"] = found if found else ""
+        new_user["Column1.prm_expire_date"] = _normalize_datetime(found) if found else ""
+   
         new_users.append(new_user)
     return new_users
 
