@@ -27,6 +27,22 @@ def find_prm_expire(obj):
                 return r
     return None
 
+def find_expire_date(obj):
+    # prm_expire と同様のネスト探索で "expire_date" を探す
+    if isinstance(obj, dict):
+        if "expire_date" in obj:
+            return obj["expire_date"]
+        for v in obj.values():
+            r = find_expire_date(v)
+            if r is not None:
+                return r
+    if isinstance(obj, list):
+        for i in obj:
+            r = find_expire_date(i)
+            if r is not None:
+                return r
+    return None
+
 #--------------------------------------------------
 # .env ファイルの読み込み（スクリプトと同じディレクトリ）
 #--------------------------------------------------
@@ -239,7 +255,14 @@ def rename_and_flatten_fields(users):
 
         found = find_prm_expire(user)
         new_user["Column1.prm_expire_date_raw"] = found if found else ""
-        new_user["Column1.prm_expire_date"] = _normalize_datetime(found) if found else ""
+        new_user["Column1.解約予定日"] = _normalize_datetime(found) if found else ""
+
+        # 最終ログイン日探索
+        cands = ["expire_date","last_login","last_login_at","last_login_date"]
+        found_expire = _find_key_recursive(user, cands)
+
+        new_user["Column1.expire_date_raw"] = found_expire or ""
+        new_user["Column1.最終ログイン日"] = _normalize_datetime(found_expire) if found_expire else ""
    
         new_users.append(new_user)
     return new_users
@@ -320,6 +343,7 @@ def main():
     if not ok:
         # エラー時は非ゼロコードで終了
         sys.exit(1)
+        
 
 if __name__ == "__main__":
     main()
