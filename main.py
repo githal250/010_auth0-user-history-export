@@ -15,6 +15,34 @@ from typing import Any, Optional, Callable
 
 from organization import export_organization_list
 
+def build_org_created_map(users):
+    m={}
+    for u in users:
+        c=u.get("app_metadata",{}).get("organization_data",{}).get("metadata",{}).get("company_name","")
+        d=u.get("created_at","")
+        if c and d and (c not in m or d<m[c]): m[c]=d
+    return m
+
+def apply_created_at_to_org_rows(org_rows, users):
+    m=build_org_created_map(users)
+    for r in org_rows:
+        c=r.get("organization","")
+        d=m.get(c,"")
+        r["created_at_raw"]=d
+        r["created_at"]=_normalize_datetime(d) if d else ""
+    return org_rows
+
+# # ★追加
+# def build_org_created_map(users):
+#     org_created = {}
+#     for u in users:
+#         company = u.get("app_metadata", {}).get("organization_data", {}).get("metadata", {}).get("company_name", "")
+#         created = u.get("created_at", "")
+#         if not company or not created:
+#             continue
+#         if company not in org_created or created < org_created[company]:
+#             org_created[company] = created
+#     return org_created
 
 def find_prm_expire(obj):
     if isinstance(obj, dict):
@@ -196,7 +224,8 @@ def _build_org_prm_map(org_rows):
     return m
 
 
-def rename_and_flatten_fields(users, org_rows=None):
+# ★変更
+def rename_and_flatten_fields(users, org_rows=None, org_created_map=None):
     org_prm_map = _build_org_prm_map(org_rows)
     new_users = []
 
@@ -218,6 +247,10 @@ def rename_and_flatten_fields(users, org_rows=None):
                 user.get("app_metadata", {}).get("organization_data", {}).get("metadata", {}).get("company_address", {}).get("city", ""),
             "Column1.app_metadata.organization_data.metadata.company_name": company_name
         }
+
+        org_created = org_created_map.get(company_name, "") if org_created_map else ""
+        new_user["Column1.org_created_at_raw"] = org_created
+        new_user["Column1.会社作成日"] = _normalize_datetime(org_created) if org_created else ""
 
         found_prm = org_prm_map.get(_norm_key(company_name), "")
         if not found_prm:
@@ -265,12 +298,18 @@ def export_all_data(domain, client_id, client_secret, audience, per_page=100, pr
         org_rows = org_info.get("rows", []) if isinstance(org_info, dict) else []
 
         progress("ユーザーリストを作成しています")
-        users = get_all_users_segmented(domain, access_token, per_page=per_page)
-        total_count = len(users)
+        raw_users = get_all_users_segmented(domain, access_token, per_page=per_page)
+        total_count = len(raw_users)
         progress(f"ユーザー取得完了: {total_count}件")
 
         progress("ユーザー情報を整形しています")
-        users = rename_and_flatten_fields(users, org_rows=org_rows)
+        org_created_map = build_org_created_map(raw_users) 
+        users = rename_and_flatten_fields(raw_users, org_rows=org_rows, org_created_map=org_created_map)
+
+        org_rows = apply_created_at_to_org_rows(org_rows, raw_users)
+        pd.DataFrame(org_rows).to_csv(org_info["csv"], index=False, encoding="utf-8-sig")
+        pd.DataFrame(org_rows).to_excel(org_info["excel"], index=False)
+
 
         output_dir = os.path.join(script_dir, "output")
         os.makedirs(output_dir, exist_ok=True)

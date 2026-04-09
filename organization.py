@@ -73,6 +73,7 @@ def extract_prm_expire_date(org_detail):
     return ""
 
 def build_org_rows(domain, access_token, per_page=100):
+
     rows = []
     orgs = get_all_organizations(domain, access_token, per_page)
 
@@ -80,7 +81,7 @@ def build_org_rows(domain, access_token, per_page=100):
         org_id = org.get("id", "")
 
         try:
-            detail = get_organization_detail(domain, access_token, org_id) if org_id else org
+            detail = get_organization_detail(domain, access_token, org_id) if org_id else org           
         except Exception:
             detail = org
 
@@ -92,9 +93,12 @@ def build_org_rows(domain, access_token, per_page=100):
 
         prm_raw = extract_prm_expire_date(detail)
 
+        created_raw = detail.get("created_at", "") or org.get("created_at", "")
         rows.append({
             "organization_id": org_id,
             "organization": org_name,
+            "created_at_raw": created_raw or "",
+            "created_at": _normalize_datetime(created_raw) if created_raw else "",
             "prm_expire_date_raw": prm_raw or "",
             "prm_expire_date": _normalize_datetime(prm_raw) if prm_raw else "",
         })
